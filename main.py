@@ -26,15 +26,21 @@ async def monitor():
 async def main():
     global sent
 
-    # اطلب الرابط من المستخدم
+    # طلب الرابط
     url = input("Enter URL: ").strip()
 
-    # استغلال كل الأنوية تلقائيًا
+    # عرض عدد الأنوية
     cores = os.cpu_count()
-    connections = cores * 500  # أقصى ضغط معقول
+    print(f"Detected CPU Cores: {cores}")
 
-    print(f"\nDetected Cores  : {cores}")
-    print(f"Using Workers   : {connections}")
+    # طلب عدد الثريدات من المستخدم
+    try:
+        connections = int(input("Enter number of threads/workers: "))
+    except:
+        print("Invalid input, using default = 500")
+        connections = 500
+
+    print(f"\nUsing Workers   : {connections}")
     print(f"Target URL      : {url}\n")
 
     async with aiohttp.ClientSession() as session:
