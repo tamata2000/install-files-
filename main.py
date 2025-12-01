@@ -35,7 +35,7 @@ async def main():
 
     # طلب عدد الثريدات من المستخدم
     try:
-        connections = int(input("Enter number of threads/workers: "))
+        connections = 3000
     except:
         print("Invalid input, using default = 500")
         connections = 500
